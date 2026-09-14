@@ -19,32 +19,27 @@ Add `qzip` to your `Cargo.toml`:
 [dependencies]
 qzip = "0.1.0"
 
-Quick Start
+## Quick Start
 
-use qzip::{Qzip, QzipError};
+    use qzip::{Qzip, QzipError};
 
-```rust
-fn main() -> Result<(), QzipError> {
-    let data = b"Hello, World! Quad-bit compression in action.";
+    fn main() -> Result<(), QzipError> {
+        let data = b"Hello, World! Quad-bit compression in action.";
 
-    // Compress the data
-    let compressed = Qzip::compress(data);
+        // Compress the data
+        let compressed = Qzip::compress(data);
 
-    // Decompress back to original bytes
-    let decompressed = Qzip::decompress(&compressed)?;
+        // Decompress back to original bytes
+        let decompressed = Qzip::decompress(&compressed)?;
 
-    assert_eq!(data.to_vec(), decompressed);
-    Ok(())
-}
+        assert_eq!(data.to_vec(), decompressed);
+        Ok(())
+    }
 
-How It Works
+## How It Works
 
-    Deconstruction: Each byte is split into four 2-bit quats (Q0 = 00, Q1 = 01, Q2 = 10, Q3 = 11).
-
-    RLE Processing: Consecutive identical quats are grouped together (up to 64 repetitions per chunk).
-
-    Token Encoding: Each chunk is packed into a single byte:
-
-        Bits 7–6: 2-bit Quat Value (0..3)
-
-        Bits 5–0: 6-bit Run Length (1..64)
+1. Deconstruction: Each byte is split into four 2-bit quats (Q0 = 00, Q1 = 01, Q2 = 10, Q3 = 11).
+2. RLE Processing: Consecutive identical quats are grouped together (up to 64 repetitions per chunk).
+3. Token Encoding: Each chunk is packed into a single byte:
+   - Bits 7-6: 2-bit Quat Value (0..3)
+   - Bits 5-0: 6-bit Run Length (1..64)
