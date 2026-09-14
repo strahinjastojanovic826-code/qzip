@@ -21,6 +21,7 @@ qzip = "0.1.0"
 
 ## Quick Start
 
+```rust
     use qzip::{Qzip, QzipError};
 
     fn main() -> Result<(), QzipError> {
