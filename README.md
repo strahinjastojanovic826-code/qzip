@@ -22,7 +22,7 @@ qzip = "0.1.0"
 ```
 ## Quick Start
 
-
+```rust
     use qzip::{Qzip, QzipError};
 
     fn main() -> Result<(), QzipError> {
@@ -38,6 +38,7 @@ qzip = "0.1.0"
         Ok(())
     }
 
+```
 ## How It Works
 
 1. Deconstruction: Each byte is split into four 2-bit quats (Q0 = 00, Q1 = 01, Q2 = 10, Q3 = 11).
