@@ -1,0 +1,13 @@
+[package]
+name = "qzip"
+version = "0.1.0"
+edition = "2024"
+authors = ["Strale <strahinjastojanovic826@gmail.com>"]
+description = "A lightweight, zero-dependency Quad-bit (2-bit) RLE compression library."
+repository = "https://github.com/yourusername/qzip"
+readme = "README.md"
+keywords = ["compression", "quat", "2-bit", "rle", "no-std"]
+categories = ["compression", "no-std", "encoding"]
+license = "AGPL-3.0-or-later"
+
+[dependencies]
