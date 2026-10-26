@@ -2,6 +2,7 @@ use crate::error::QzipError;
 use crate::qzip::Qzip;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub struct AsyncQzip;
 
@@ -23,4 +24,28 @@ impl AsyncQzip {
         });
         rx
     }
+    pub async fn compress_stream<R, W>(mut reader: R, mut writer: W) -> Result<(), QzipError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer).await?;
+    let compressed = Qzip::compress(&buffer);
+    writer.write_all(&compressed).await?;
+    writer.flush().await?;
+    Ok(())
+}
+pub async fn decompress_stream<R, W>(mut reader: R, mut writer: W) -> Result<(), QzipError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut compressed = Vec::new();
+    reader.read_to_end(&mut compressed).await?;
+    let decompressed = Qzip::decompress(&compressed)?;
+    writer.write_all(&decompressed).await?;
+    writer.flush().await?;
+    Ok(())
+}
 }

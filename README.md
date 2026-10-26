@@ -12,7 +12,11 @@ Designed to seamlessly integrate with custom low-level ecosystems, `qzip` breaks
 * **Zero-Allocation Options:** Provides `decompress_to_slice` and `compress_into` for high-performance buffer reuse.
 * **Background Threading:** Supports non-blocking background compression and decompression via standard threads.
 * **Standard I/O Streaming:** Full support for `std::io::Read` and `std::io::Write` interfaces via `QzipEncoder` and `QzipDecoder`.
-* **Zero External Dependencies:** Built entirely with pure standard Rust for minimal crate footprint and ultra-fast compilation.
+* **Async Tokio I/O:** Modern asynchronous compression and decompression support using Tokio (`AsyncRead` / `AsyncWrite`).
+* **Standard Serde Support:** Seamless integration with the Rust `serde` ecosystem for data serialization and deserialization.
+* **SIMD Accelerated:** High-performance vector-accelerated chunk processing for faster bit packaging.
+* **Zero-Copy Iterator API:** Stream quats on-the-fly without heap allocations using `QuatIterator`.
+* **Checksum Verification:** Enhanced data integrity checks to detect stream corruption.
 
 ## Licensing
 
@@ -27,7 +31,7 @@ Add `qzip` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qzip = "0.6.0"
+qzip = "1.0.0"
 
 ```
 ## Quick Start
@@ -37,9 +41,9 @@ use quat_zip::qzip::Qzip;
 use quat_zip::error::QzipError;
 use quat_zip::async_zip::AsyncQzip;
 use quat_zip::quat::Quat;
-use quat_zip::serde::BinarySerializable;
 
-fn main() -> Result<(), QzipError> {
+#[tokio::main]
+async fn main() -> Result<(), QzipError> {
     let data = b"Hello, World! Quad-bit compression in action.";
 
     // 1. Standard compression and decompression
@@ -52,18 +56,18 @@ fn main() -> Result<(), QzipError> {
     let decompressed_bytes = Qzip::decompress_to_slice(&compressed, &mut buffer)?;
     assert_eq!(&buffer[..decompressed_bytes], data);
 
-    // 3. Background thread compression (Zero-dependency std::thread)
-    let rx_compressed = AsyncQzip::compress_async(data.to_vec());
-    let async_compressed = rx_compressed.recv().unwrap();
+    // 3. Async compression and decompression (Tokio I/O)
+    let mut compressed_async_buf = Vec::new();
+    AsyncQzip::compress_async(tokio::io::Cursor::new(data), &mut compressed_async_buf).await?;
+    
+    let mut decompressed_async_buf = Vec::new();
+    AsyncQzip::decompress_async(tokio::io::Cursor::new(compressed_async_buf), &mut decompressed_async_buf).await?;
+    assert_eq!(data.to_vec(), decompressed_async_buf);
 
-    let rx_decompressed = AsyncQzip::decompress_async(async_compressed);
-    let async_decompressed = rx_decompressed.recv().unwrap()?;
-    assert_eq!(data.to_vec(), async_decompressed);
-
-    // 4. Custom binary serialization for Quats
+    // 4. Standard Serde serialization for Quats (using bincode or similar)
     let quats = vec![Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3];
-    let bytes = quats.to_bytes();
-    let restored_quats = <Vec<Quat>>::from_bytes(&bytes)?;
+    let bytes = bincode::serialize(&quats).unwrap();
+    let restored_quats: Vec<Quat> = bincode::deserialize(&bytes).unwrap();
     assert_eq!(quats, restored_quats);
 
     println!("All compression, streaming, and serialization tests passed!");

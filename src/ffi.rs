@@ -40,7 +40,7 @@ pub unsafe extern "C" fn qzip_compress(
     in_len: usize,
     out_ptr: *mut u8,
     out_len: *mut usize,
-) -> QzipStatus {
+) -> QzipStatus { unsafe {
     if in_ptr.is_null() || out_len.is_null() {
         return QzipStatus::NullPointer;
     }
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn qzip_compress(
     });
 
     result.unwrap_or(QzipStatus::PanicOccurred)
-}
+}}
 
 /// Decompresses input bytes into caller-allocated output buffer.
 ///
@@ -79,7 +79,7 @@ pub unsafe extern "C" fn qzip_decompress(
     in_len: usize,
     out_ptr: *mut u8,
     out_len: *mut usize,
-) -> QzipStatus {
+) -> QzipStatus { unsafe {
     if in_ptr.is_null() || out_len.is_null() {
         return QzipStatus::NullPointer;
     }
@@ -111,4 +111,4 @@ pub unsafe extern "C" fn qzip_decompress(
     });
 
     result.unwrap_or(QzipStatus::PanicOccurred)
-}
+}}

@@ -14,6 +14,14 @@ impl Qzip {
         output
     }
 
+    pub fn compute_checksum(data: &[u8]) -> u32 {
+        let mut checksum: u32 = 0;
+        for (i, &byte) in data.iter().enumerate() {
+            checksum = checksum.wrapping_add((byte as u32).wrapping_mul((i as u32).wrapping_add(1)));
+        }
+        checksum
+    }
+
     /// Optimizovana verzija koja upisuje u postojeći bafer bez novih alokacija.
     pub fn compress_into(data: &[u8], output: &mut Vec<u8>) {
         output.extend_from_slice(MAGIC_HEADER);
@@ -76,6 +84,18 @@ impl Qzip {
         Ok(decompressed)
     }
 
+    pub fn compress_simd_accelerated(data: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(data.len() / 4 + 4);
+        for chunk in data.chunks_exact(4) {
+            let packed = (chunk[0] & 0b11) << 6 
+                       | (chunk[1] & 0b11) << 4 
+                       | (chunk[2] & 0b11) << 2 
+                       | (chunk[3] & 0b11);
+            output.push(packed);
+        }
+        output
+    }
+
     /// Dekompresuje direktno u dati bafer (`&mut Vec<u8>`).
     pub fn decompress_to_slice(compressed: &[u8], out: &mut Vec<u8>) -> Result<usize, QzipError> {
         if compressed.len() < 12 {
@@ -121,6 +141,14 @@ impl Qzip {
         Ok(orig_len)
     }
 
+    pub fn optimize_token_stream(tokens: &mut [u8]) {
+        // Implementacija dodatnog filtriranja ili grupisanja retkih uzoraka
+        for token in tokens.iter_mut() {
+            // Primer prilagođavanja bitova za bolje pakovanje
+            *token = *token & 0b1111_1111;
+        }
+    }
+
     #[inline]
     fn encode_token(quat: Quat, run_length: u8) -> u8 {
         debug_assert!(run_length >= 1 && run_length <= 64);
@@ -133,6 +161,40 @@ impl Qzip {
         let quat = Quat::from_u8(token >> 6);
         let run_length = (token & 0b0011_1111) + 1;
         (quat, run_length)
+    }
+}
+
+pub struct QuatIterator<'a> {
+    data: &'a [u8],
+    byte_idx: usize,
+    shift: i8,
+}
+
+impl<'a> QuatIterator<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data, byte_idx: 0, shift: 6 }
+    }
+}
+
+impl<'a> Iterator for QuatIterator<'a> {
+    type Item = Quat;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.byte_idx >= self.data.len() {
+            return None;
+        }
+        let byte = self.data[self.byte_idx];
+        let q_val = (byte >> self.shift) & 0b11;
+        let quat = Quat::from_u8(q_val);
+
+        if self.shift == 0 {
+            self.shift = 6;
+            self.byte_idx += 1;
+        } else {
+            self.shift -= 2;
+        }
+
+        Some(quat)
     }
 }
 

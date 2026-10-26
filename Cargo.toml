@@ -1,16 +1,18 @@
 [package]
 name = "quat_zip"
-version = "0.6.0"
+version = "1.0.0"
 edition = "2024"
 authors = ["Strale <strahinjastojanovic826@gmail.com>"]
 description = "A lightweight, zero-dependency Quad-bit (2-bit) RLE compression library."
 repository = "https://github.com/strahinjastojanovic826-code/qzip"
 readme = "README.md"
-keywords = ["compression", "quat", "2-bit", "rle", "no-std"]
-categories = ["compression", "no-std", "encoding"]
-license = "AGPL-3.0-or-later"
+keywords = ["compression", "quat", "2-bit", "rle",]
+categories = ["compression", "encoding"]
+license = "AGPL-3.0-only"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
