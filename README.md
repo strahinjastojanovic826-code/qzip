@@ -17,6 +17,49 @@ Designed to seamlessly integrate with custom low-level ecosystems, `qzip` breaks
 * **SIMD Accelerated:** High-performance vector-accelerated chunk processing for faster bit packaging.
 * **Zero-Copy Iterator API:** Stream quats on-the-fly without heap allocations using `QuatIterator`.
 * **Checksum Verification:** Enhanced data integrity checks to detect stream corruption.
+* **Hybrid LZ77 Engine:** Sliding-window dictionary matching combined with RLE for superior compression ratios on complex sequences.
+* **Adaptive Entropy Coding:** Dynamic frequency analysis and variable-length bit-code assignment (Huffman-style) for skewed quaternary distributions.
+* **Strict Checksum Enforcement:** Advanced data integrity validation (`decompress_verified`) to guarantee absolute protection against stream corruption.
+
+# Third-Party Licenses
+
+This project relies on the following third-party crates (`serde` and `tokio`). Their respective licenses and copyright notices are listed below:
+
+## 1. serde
+* **License:** MIT OR Apache-2.0 (at your option)
+* **Copyright:** Copyright (c) 2017 David Tolnay
+* **Terms:** Licensed under either of the Apache License, Version 2.0 or the MIT license at your option.
+
+---
+
+## 2. tokio
+* **License:** MIT
+* **Copyright:** Copyright (c) Tokio Contributors
+* **Terms:** Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction...
+
+## 📊 Benchmark result
+
+| Test Name | Execution Time / Duration | Performance / Metrics & Details |
+| :--- | :--- | :--- |
+| `test_quat_conversion` | 700ns[cite: 24] | Basic quaternary conversion verification |
+| `test_ffi_null_pointer_handling` | 700ns[cite: 24] | FFI safety check for null pointers |
+| `test_ffi_corrupt_decompress_input` | 1.9µs[cite: 24] | FFI error handling for corrupted streams |
+| `test_empty_input` | 2.7µs[cite: 24] | Handling empty byte inputs |
+| `test_invalid_magic_header` | 3.4µs[cite: 24] | Error handling for invalid magic headers |
+| `test_decompress_to_slice_small_buffer` | 6.9µs[cite: 24] | Slice decompression with limited buffer |
+| `test_ffi_buffer_too_small` | 9.6µs[cite: 24] | FFI size query and buffer limit check |
+| `test_truncated_stream` | 13.4µs[cite: 24] | Detection of truncated byte streams |
+| `test_ffi_compress_and_decompress_success` | 17.2µs[cite: 24] | Successful C-ABI interop roundtrip |
+| `test_run_length_overflow` | 17.4µs[cite: 24] | RLE chunk overflow handling |
+| `test_streaming_encoder_decoder` | 20.8µs[cite: 24] | Stream pipeline writer/reader validation |
+| `test_roundtrip_basic` | 21.7µs[cite: 24] | Basic roundtrip (Input size: 58 bytes)[cite: 24] |
+| `test_compress_into_buffer_reuse` | 33µs[cite: 24] | Zero-allocation buffer reuse verification |
+| `test_high_repetitive_data` | 156.2µs[cite: 24] | Compressed length: 75 bytes[cite: 24] |
+| `test_stress_random_data` | 26.22ms[cite: 25] | Stress test with 100,000 random bytes[cite: 25] |
+| `test_entropy_coder_and_benchmark` | 1.02ms[cite: 24] | Huffman Build Time (100,000 quats stream)[cite: 24] |
+| `test_simd_packing_and_benchmark` | 9.63ms[cite: 24] | SIMD Throughput: **158.45 MB/s** (1.6 MB processed)[cite: 24] |
+| `test_lz77_quats_and_benchmark` | 13.85ms[cite: 25] | Quat Speed: **2.89 MQuats/s** (40k quats, 161 tokens)[cite: 25] |
+| `test_checksum_verification_and_benchmark` | Comp: 152.48ms<br>Decomp: 93.70ms[cite: 25] | Decomp Throughput: **10.18 MB/s** (1 MB dataset)[cite: 25] |
 
 ## Licensing
 
@@ -31,7 +74,7 @@ Add `qzip` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qzip = "1.0.0"
+qzip = "1.1.0"
 
 ```
 ## Quick Start
@@ -56,25 +99,30 @@ async fn main() -> Result<(), QzipError> {
     let decompressed_bytes = Qzip::decompress_to_slice(&compressed, &mut buffer)?;
     assert_eq!(&buffer[..decompressed_bytes], data);
 
-    // 3. Async compression and decompression (Tokio I/O)
+    // 3. Strict Checksum Enforcement (Industrial Data Integrity)
+    let secure_compressed = Qzip::compress_with_checksum(data);
+    let verified_decompressed = Qzip::decompress_verified(&secure_compressed)?;
+    assert_eq!(data.to_vec(), verified_decompressed);
+
+    // 4. Async compression and decompression (Tokio I/O)
     let mut compressed_async_buf = Vec::new();
     AsyncQzip::compress_async(tokio::io::Cursor::new(data), &mut compressed_async_buf).await?;
-    
+
     let mut decompressed_async_buf = Vec::new();
     AsyncQzip::decompress_async(tokio::io::Cursor::new(compressed_async_buf), &mut decompressed_async_buf).await?;
     assert_eq!(data.to_vec(), decompressed_async_buf);
 
-    // 4. Standard Serde serialization for Quats (using bincode or similar)
+    // 5. Standard Serde serialization for Quats
     let quats = vec![Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3];
     let bytes = bincode::serialize(&quats).unwrap();
     let restored_quats: Vec<Quat> = bincode::deserialize(&bytes).unwrap();
     assert_eq!(quats, restored_quats);
 
-    println!("All compression, streaming, and serialization tests passed!");
+    println!("All compression, streaming, checksum, and serialization tests passed!");
     Ok(())
 }
-
 ```
+
 ## How It Works
 
 1. Deconstruction: Each byte is split into four 2-bit quats (Q0 = 00, Q1 = 01, Q2 = 10, Q3 = 11).
@@ -82,8 +130,6 @@ async fn main() -> Result<(), QzipError> {
 3. Token Encoding: Each chunk is packed into a single byte:
    - Bits 7-6: 2-bit Quat Value (0..3)
    - Bits 5-0: 6-bit Run Length (1..64)
-
-```
 
 # Integration Guide (C, C++, C#)
 

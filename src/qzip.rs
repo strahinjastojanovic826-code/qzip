@@ -14,14 +14,6 @@ impl Qzip {
         output
     }
 
-    pub fn compute_checksum(data: &[u8]) -> u32 {
-        let mut checksum: u32 = 0;
-        for (i, &byte) in data.iter().enumerate() {
-            checksum = checksum.wrapping_add((byte as u32).wrapping_mul((i as u32).wrapping_add(1)));
-        }
-        checksum
-    }
-
     /// Optimizovana verzija koja upisuje u postojeći bafer bez novih alokacija.
     pub fn compress_into(data: &[u8], output: &mut Vec<u8>) {
         output.extend_from_slice(MAGIC_HEADER);
@@ -82,6 +74,75 @@ impl Qzip {
         let mut decompressed = Vec::with_capacity(orig_len);
         Self::decompress_to_slice(compressed, &mut decompressed)?;
         Ok(decompressed)
+    }
+
+    #[inline(always)]
+    pub fn unpack_byte_quats_fast(byte: u8) -> [Quat; 4] {
+        [
+            Quat::from_u8(byte >> 6),
+            Quat::from_u8((byte >> 4) & 0b0011),
+            Quat::from_u8((byte >> 2) & 0b0011),
+            Quat::from_u8(byte & 0b0011),
+        ]
+    }
+
+    pub fn compute_checksum(data: &[u8]) -> u32 {
+        let mut checksum: u32 = 0;
+        for (i, &byte) in data.iter().enumerate() {
+            checksum = checksum.wrapping_add((byte as u32).wrapping_mul((i as u32).wrapping_add(1)));
+        }
+        checksum
+    }
+
+    /// Compresses data and appends a 4-byte LE checksum at the end.
+    pub fn compress_with_checksum(data: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(data.len() + 16);
+        Self::compress_into(data, &mut output);
+        
+        let checksum = Self::compute_checksum(data);
+        output.extend_from_slice(&checksum.to_le_bytes());
+        output
+    }
+
+    /// Decompresses data and strictly enforces checksum validation.
+    pub fn decompress_verified(compressed: &[u8]) -> Result<Vec<u8>, QzipError> {
+        // Must contain Header (4b) + OrigLen (8b) + Checksum (4b) = 16 bytes minimum
+        if compressed.len() < 16 {
+            return Err(QzipError::CorruptStream);
+        }
+
+        let body_len = compressed.len() - 4;
+        let payload = &compressed[..body_len];
+        let expected_checksum = u32::from_le_bytes(
+            compressed[body_len..]
+                .try_into()
+                .map_err(|_| QzipError::CorruptStream)?
+        );
+
+        let decompressed = Self::decompress(payload)?;
+        let actual_checksum = Self::compute_checksum(&decompressed);
+
+        if actual_checksum != expected_checksum {
+            return Err(QzipError::ChecksumMismatch);
+        }
+
+        Ok(decompressed)
+    }
+
+    /// SIMD-accelerated quaternary packing: converts 8 raw bytes into quaternary representation.
+    pub fn compress_simd_chunk(chunk: &[u8; 8], output: &mut Vec<u8>) {
+        // Process 64-bit word in parallel using bit masks (SWAR execution model)
+        let word = u64::from_le_bytes(*chunk);
+        
+        // Extract 2-bit quats across the entire 64-bit register
+        let q0 = ((word >> 6) & 0x0303_0303_0303_0303) as u64;
+        let q1 = ((word >> 4) & 0x0303_0303_0303_0303) as u64;
+        let q2 = ((word >> 2) & 0x0303_0303_0303_0303) as u64;
+        let q3 = (word & 0x0303_0303_0303_0303) as u64;
+
+        // Combine into packed bytes
+        let packed_word = (q0 << 6) | (q1 << 4) | (q2 << 2) | q3;
+        output.extend_from_slice(&packed_word.to_le_bytes());
     }
 
     pub fn compress_simd_accelerated(data: &[u8]) -> Vec<u8> {
