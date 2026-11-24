@@ -7,6 +7,9 @@ pub enum QzipError {
     InvalidMagic,
     ChecksumMismatch,
     IoError(String),
+    UnsupportedVersion(u8),
+    InvalidFlags(u8),
+    InvalidFrame(String),
 }
 
 impl fmt::Display for QzipError {
@@ -17,6 +20,16 @@ impl fmt::Display for QzipError {
             QzipError::InvalidMagic => write!(f, "Neispravno zaglavlje (Magic header)"),
             QzipError::ChecksumMismatch => write!(f, "Netačna CRC32 kontrolna suma (oštećenje podataka)"),
             QzipError::IoError(msg) => write!(f, "I/O greška: {}", msg),
+            
+            QzipError::UnsupportedVersion(ver) => {
+                write!(f, "Unsupported QZIP format version: {}", ver)
+            }
+            QzipError::InvalidFlags(flags) => {
+                write!(f, "Invalid QZIP header flags: 0x{:02x}", flags)
+            }
+            QzipError::InvalidFrame(msg) => {
+                write!(f, "Invalid QZIP frame: {}", msg)
+            }
         }
     }
 }

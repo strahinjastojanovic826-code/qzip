@@ -20,46 +20,135 @@ Designed to seamlessly integrate with custom low-level ecosystems, `qzip` breaks
 * **Hybrid LZ77 Engine:** Sliding-window dictionary matching combined with RLE for superior compression ratios on complex sequences.
 * **Adaptive Entropy Coding:** Dynamic frequency analysis and variable-length bit-code assignment (Huffman-style) for skewed quaternary distributions.
 * **Strict Checksum Enforcement:** Advanced data integrity validation (`decompress_verified`) to guarantee absolute protection against stream corruption.
+* **Versioned Binary Header & Flags:** Structured header with format version (`v1`), capability flags, and chunk size metadata.
+* **Chunked & Framed Streaming:** Frame-based quaternary streaming (`FramedQuatEncoder` / `FramedQuatDecoder`) with per-frame `CRC32` validation and end-of-stream markers.
+* **75% Quaternary Savings & Quantization:** Explicit 2-bit-per-symbol packing (4 quats per byte) and lossy 8-to-4-level quantization helpers for quaternary workflows.
+* **Huffman Entropy Codec:** Full binary Huffman encoding and decoding (`QuatHuffmanCodec`) with frequency metadata for skewed `Quat` streams.
+* **Accelerated LZ77 Engine:** Trigram-indexed sliding-window search (`QuatLz77Fast`) with longer match lengths and token decompression.
+* **Tokio `spawn_blocking` & Async Streams:** Offloads heavy packing/unpacking via `spawn_blocking` alongside `AsyncQuatPackWriter` and `AsyncQuatUnpackReader`.
+* **Stable Architecture-Aware Unpacking:** Stable Rust `#[cfg(target_arch)]` quaternary unpacking without requiring `nightly`.
+* **Expanded C-ABI FFI:** Native quaternary packing and unpacking entry points (`qzip_pack_quats`, `qzip_unpack_quats`) and extended `QzipStatus` error codes.
 
 # Third-Party Licenses
 
-This project relies on the following third-party crates (`serde` and `tokio`). Their respective licenses and copyright notices are listed below:
-
-## 1. serde
-* **License:** MIT OR Apache-2.0 (at your option)
-* **Copyright:** Copyright (c) 2017 David Tolnay
-* **Terms:** Licensed under either of the Apache License, Version 2.0 or the MIT license at your option.
+This software includes open-source components developed by third parties. Below are the corresponding license notices and full legal texts for each component used in this project.
 
 ---
 
-## 2. tokio
+## 1. Serde
+
+* **Author:** David Tolnay
+* **Repository:** https://github.com/serde-rs/serde
+* **License:** MIT / Apache 2.0 (Dual License)
+
+### MIT License
+
+Copyright (c) 2017 David Tolnay
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+### Apache License, Version 2.0
+
+Copyright (c) 2017 David Tolnay
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+## 2. Tokio
+
+* **Author:** Tokio Contributors
+* **Repository:** https://github.com/tokio-rs/tokio
 * **License:** MIT
-* **Copyright:** Copyright (c) Tokio Contributors
-* **Terms:** Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction...
+
+### MIT License
+
+Copyright (c) Tokio Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## 📊 Benchmark result
 
-| Test Name | Execution Time / Duration | Performance / Metrics & Details |
-| :--- | :--- | :--- |
-| `test_quat_conversion` | 700ns[cite: 24] | Basic quaternary conversion verification |
-| `test_ffi_null_pointer_handling` | 700ns[cite: 24] | FFI safety check for null pointers |
-| `test_ffi_corrupt_decompress_input` | 1.9µs[cite: 24] | FFI error handling for corrupted streams |
-| `test_empty_input` | 2.7µs[cite: 24] | Handling empty byte inputs |
-| `test_invalid_magic_header` | 3.4µs[cite: 24] | Error handling for invalid magic headers |
-| `test_decompress_to_slice_small_buffer` | 6.9µs[cite: 24] | Slice decompression with limited buffer |
-| `test_ffi_buffer_too_small` | 9.6µs[cite: 24] | FFI size query and buffer limit check |
-| `test_truncated_stream` | 13.4µs[cite: 24] | Detection of truncated byte streams |
-| `test_ffi_compress_and_decompress_success` | 17.2µs[cite: 24] | Successful C-ABI interop roundtrip |
-| `test_run_length_overflow` | 17.4µs[cite: 24] | RLE chunk overflow handling |
-| `test_streaming_encoder_decoder` | 20.8µs[cite: 24] | Stream pipeline writer/reader validation |
-| `test_roundtrip_basic` | 21.7µs[cite: 24] | Basic roundtrip (Input size: 58 bytes)[cite: 24] |
-| `test_compress_into_buffer_reuse` | 33µs[cite: 24] | Zero-allocation buffer reuse verification |
-| `test_high_repetitive_data` | 156.2µs[cite: 24] | Compressed length: 75 bytes[cite: 24] |
-| `test_stress_random_data` | 26.22ms[cite: 25] | Stress test with 100,000 random bytes[cite: 25] |
-| `test_entropy_coder_and_benchmark` | 1.02ms[cite: 24] | Huffman Build Time (100,000 quats stream)[cite: 24] |
-| `test_simd_packing_and_benchmark` | 9.63ms[cite: 24] | SIMD Throughput: **158.45 MB/s** (1.6 MB processed)[cite: 24] |
-| `test_lz77_quats_and_benchmark` | 13.85ms[cite: 25] | Quat Speed: **2.89 MQuats/s** (40k quats, 161 tokens)[cite: 25] |
-| `test_checksum_verification_and_benchmark` | Comp: 152.48ms<br>Decomp: 93.70ms[cite: 25] | Decomp Throughput: **10.18 MB/s** (1 MB dataset)[cite: 25] |
+| Test Name | Status | Measured Time | Additional Metrics / Notes |
+| --- | --- | --- | --- |
+| `test_quat_conversion` | `ok` | `300ns`[cite: 39] | `Quat::from_u8` (`0b00..0b11`) |
+| `test_empty_input` | `ok` | `2µs`[cite: 39] | Empty slice compression/decompression |
+| `test_invalid_magic_header` | `ok` | `3.6µs`[cite: 39] | Expects `QzipError::InvalidMagic` |
+| `test_ffi_null_pointer_handling` | `ok` | `6.2µs`[cite: 39] | Expects `QzipStatus::NullPointer` |
+| `test_ffi_buffer_too_small` | `ok` | `6.5µs`[cite: 39] | Expects `QzipStatus::BufferTooSmall` |
+| `test_ffi_corrupt_decompress_input` | `ok` | `9.4µs`[cite: 39] | Expects `CorruptStream` or `InvalidMagic` |
+| `test_decompress_to_slice_small_buffer` | `ok` | `13.3µs`[cite: 39] | Truncated stream check (`CorruptStream`) |
+| `test_ffi_pack_and_unpack_quats_benchmark` | `ok` | `17.5µs`[cite: 39] | FFI `qzip_pack_quats` & `qzip_unpack_quats` |
+| `test_truncated_stream` | `ok` | `19.2µs`[cite: 39, 40] | Expects `QzipError::CorruptStream` |
+| `test_streaming_encoder_decoder` | `ok` | `21.4µs`[cite: 39] | Stream roundtrip verification |
+| `test_ffi_compress_and_decompress_success` | `ok` | `23.3µs`[cite: 39] | Two-pass size query + compress/decompress |
+| `test_roundtrip_basic` | `ok` | `25.1µs`[cite: 39] | Input size: `58 bytes`[cite: 39] |
+| `test_run_length_overflow` | `ok` | `27µs`[cite: 39] | Run-length boundary handling |
+| `test_compress_into_buffer_reuse` | `ok` | `65.6µs`[cite: 39] | Buffer reuse without extra allocation |
+| `test_high_repetitive_data` | `ok` | `221.7µs`[cite: 39] | Compressed len: `75` bytes[cite: 39] |
+| `test_async_quat_blocking_and_streams_benchmark` | `ok` | `3.3324ms`[cite: 39] | Processed `16384` quats (`spawn_blocking` & async I/O)[cite: 39] |
+| `test_quat_packing_quantization_and_arch_unpack_benchmark` | `ok` | `9.2695ms`[cite: 40] | Processed `100000` quats (packing, quantization & arch unpack)[cite: 40] |
+| `test_header_flags_crc32_and_framed_stream_benchmark` | `ok` | `9.9431ms`[cite: 39, 40] | Framed output: `10502` bytes[cite: 39, 40] |
+| `test_huffman_quat_codec_benchmark` | `ok` | `15.293ms`[cite: 40] | Stream bytes: `17500`[cite: 40] |
+| `test_simd_packing_and_benchmark` | `ok` | `15.1925ms`[cite: 40] | `1600000` bytes processed (`100.44 MB/s`)[cite: 40] |
+| `test_lz77_fast_roundtrip_benchmark` | `ok` | `18.2766ms`[cite: 40] | Generated `7` tokens[cite: 40] |
+| `test_lz77_quats_and_benchmark` | `ok` | `21.3711ms`[cite: 40] | `40000` quats, `161` tokens (`1.87 MQuats/s`)[cite: 40] |
+| `test_stress_random_data` | `ok` | `28.9182ms`[cite: 40] | Input size: `100000` bytes[cite: 40] |
+| `test_entropy_coder_and_benchmark` | `ok` | `1.0278ms` (Huffman build)[cite: 39] | Stream: `100000` quats, `Q0` code: `(0, 1)`[cite: 39] |
+| `test_checksum_verification_and_benchmark` | `ok` | `158.3134ms` (comp) / `93.1714ms` (decomp)[cite: 40] | `1000000` bytes -> `3000016` bytes (`10.24 MB/s` decomp)[cite: 40] |
+
+### Detailed Subsystem Benchmarks
+
+| Subsystem | Workload / Input | Time | Throughput / Output |
+| --- | --- | --- | --- |
+| Adaptive Quat Entropy Coder | `100000` quats[cite: 39] | Huffman build: `1.0278ms`[cite: 39] | `Q0` bit code assignment: `(0, 1)`[cite: 39] |
+| SIMD Vectorized Processing | `1600000` bytes[cite: 40] | `15.1925ms`[cite: 40] | `100.44 MB/s`[cite: 40] |
+| Hybrid LZ77 Quat Engine | `40000` quats[cite: 40] | Compression: `21.3711ms`[cite: 40] | `161` tokens, `1.87 MQuats/s`[cite: 40] |
+| Strict Checksum Enforcement | `1000000` bytes[cite: 40] | Comp: `158.3134ms` / Decomp: `93.1714ms`[cite: 40] | Compressed: `3000016` bytes, Decomp: `10.24 MB/s`[cite: 40] |
 
 ## Licensing
 
@@ -74,7 +163,7 @@ Add `qzip` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qzip = "1.1.0"
+qzip = "1.2.0"
 
 ```
 ## Quick Start
@@ -123,6 +212,59 @@ async fn main() -> Result<(), QzipError> {
 }
 ```
 
+## Quaternary Streaming, Framing, Huffman & LZ77
+
+```rust
+use quat_zip::async_zip::{pack_quats_blocking, unpack_quats_blocking};
+use quat_zip::entropy::QuatHuffmanCodec;
+use quat_zip::error::QzipError;
+use quat_zip::lz77::QuatLz77Fast;
+use quat_zip::quat::Quat;
+use quat_zip::qzip::{FramedQuatDecoder, FramedQuatEncoder};
+
+#[tokio::main]
+async fn main() -> Result<(), QzipError> {
+    let quats = vec![
+        Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3,
+        Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3,
+        Quat::Q0, Quat::Q0, Quat::Q1, Quat::Q3,
+    ];
+
+    // 1. Framed & chunked quaternary stream with CRC32
+    let mut encoder = FramedQuatEncoder::new(Vec::new(), 4, true)?;
+    encoder.push_quats(&quats)?;
+    let framed = encoder.finish()?;
+
+    let mut decoder = FramedQuatDecoder::new(&framed[..])?;
+    let mut decoded_quats = Vec::new();
+    while let Some(chunk) = decoder.next_quats_chunk()? {
+        decoded_quats.extend(chunk);
+    }
+    assert_eq!(decoded_quats, quats);
+
+    // 2. Huffman entropy coding on Quat symbols
+    let huff = QuatHuffmanCodec::encode(&quats);
+    let huff_decoded = QuatHuffmanCodec::decode(&huff)
+        .map_err(|e| QzipError::InvalidFrame(e.to_string()))?;
+    assert_eq!(huff_decoded, quats);
+
+    // 3. Fast LZ77 on Quat sequence
+    let lz = QuatLz77Fast::new(64);
+    let tokens = lz.compress_fast(&quats);
+    let lz_decoded = QuatLz77Fast::decompress_fast(&tokens)
+        .map_err(|e| QzipError::InvalidFrame(e.to_string()))?;
+    assert_eq!(lz_decoded, quats);
+
+    // 4. Blocking thread-pool packing & unpacking
+    let packed = pack_quats_blocking(quats.clone()).await?;
+    let unpacked = unpack_quats_blocking(packed, quats.len()).await?;
+    assert_eq!(unpacked, quats);
+
+    Ok(())
+}
+```
+
+
 ## How It Works
 
 1. Deconstruction: Each byte is split into four 2-bit quats (Q0 = 00, Q1 = 01, Q2 = 10, Q3 = 11).
@@ -170,6 +312,57 @@ int main(void) {
     }
 
     free(compressed);
+    return 0;
+}
+```
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include "quat_zip.h"
+
+int main(void) {
+    // Quaternary values (0..=3), 1 symbol per byte on input
+    uint8_t quats[] = {0x00, 0x01, 0x02, 0x03, 0x03, 0x02, 0x01, 0x00};
+    size_t quat_count = sizeof(quats) / sizeof(quats[0]);
+
+    // 1. Query packed size (4 quats per byte -> 75% size reduction vs 1 byte/quat)
+    size_t packed_len = 0;
+    QzipStatus status = qzip_pack_quats(quats, quat_count, NULL, &packed_len);
+    if (status != Success) {
+        printf("Failed to query packed size: %d\n", status);
+        return 1;
+    }
+
+    // 2. Pack quats into caller-allocated buffer
+    uint8_t *packed = (uint8_t *)malloc(packed_len ? packed_len : 1);
+    if (!packed) {
+        return 1;
+    }
+    status = qzip_pack_quats(quats, quat_count, packed, &packed_len);
+    if (status != Success) {
+        printf("Failed to pack quats: %d\n", status);
+        free(packed);
+        return 1;
+    }
+
+    // 3. Unpack back to quat_count bytes
+    size_t unpacked_len = 0;
+    status = qzip_unpack_quats(packed, packed_len, quat_count, NULL, &unpacked_len);
+    if (status == Success) {
+        uint8_t *unpacked = (uint8_t *)malloc(unpacked_len ? unpacked_len : 1);
+        if (unpacked) {
+            status = qzip_unpack_quats(packed, packed_len, quat_count, unpacked, &unpacked_len);
+            if (status == Success) {
+                printf("Packed %zu quats into %zu bytes and unpacked %zu values.\n",
+                       quat_count, packed_len, unpacked_len);
+            }
+            free(unpacked);
+        }
+    }
+
+    free(packed);
     return 0;
 }
 ```

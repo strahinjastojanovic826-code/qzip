@@ -4,6 +4,95 @@ use std::io::{Read, Write, Result as IoResult};
 
 pub const MAGIC_HEADER: &[u8; 4] = b"QZIP";
 
+pub const FORMAT_VERSION: u8 = 1;
+
+pub const FLAG_HAS_CHECKSUM: u8 = 0b0000_0001;
+pub const FLAG_CHUNKED_STREAM: u8 = 0b0000_0010;
+pub const FLAG_QUAT_4X_PACKED: u8 = 0b0000_0100;
+const KNOWN_FLAGS_MASK: u8 = FLAG_HAS_CHECKSUM | FLAG_CHUNKED_STREAM | FLAG_QUAT_4X_PACKED;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QzipHeader {
+    pub version: u8,
+    pub flags: u8,
+    pub chunk_size: u32,
+}
+
+impl QzipHeader {
+    pub const WIRE_LEN: usize = 4 + 1 + 1 + 4; // MAGIC (4) + version (1) + flags (1) + chunk_size (4)
+
+    pub fn new(flags: u8, chunk_size: u32) -> Result<Self, QzipError> {
+        if (flags & !KNOWN_FLAGS_MASK) != 0 {
+            return Err(QzipError::InvalidFlags(flags));
+        }
+        Ok(Self {
+            version: FORMAT_VERSION,
+            flags,
+            chunk_size,
+        })
+    }
+
+    pub fn has_checksum(&self) -> bool {
+        (self.flags & FLAG_HAS_CHECKSUM) != 0
+    }
+
+    pub fn is_chunked(&self) -> bool {
+        (self.flags & FLAG_CHUNKED_STREAM) != 0
+    }
+
+    pub fn is_quat_packed(&self) -> bool {
+        (self.flags & FLAG_QUAT_4X_PACKED) != 0
+    }
+
+    pub fn encode(&self) -> [u8; Self::WIRE_LEN] {
+        let mut buf = [0u8; Self::WIRE_LEN];
+        buf[0..4].copy_from_slice(MAGIC_HEADER);
+        buf[4] = self.version;
+        buf[5] = self.flags;
+        buf[6..10].copy_from_slice(&self.chunk_size.to_le_bytes());
+        buf
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QzipError> {
+        if bytes.len() < Self::WIRE_LEN {
+            return Err(QzipError::CorruptStream);
+        }
+        if &bytes[0..4] != MAGIC_HEADER {
+            return Err(QzipError::InvalidMagic);
+        }
+        let version = bytes[4];
+        if version != FORMAT_VERSION {
+            return Err(QzipError::UnsupportedVersion(version));
+        }
+        let flags = bytes[5];
+        if (flags & !KNOWN_FLAGS_MASK) != 0 {
+            return Err(QzipError::InvalidFlags(flags));
+        }
+        let chunk_size = u32::from_le_bytes(
+            bytes[6..10]
+                .try_into()
+                .map_err(|_| QzipError::CorruptStream)?,
+        );
+        Ok(Self {
+            version,
+            flags,
+            chunk_size,
+        })
+    }
+}
+
+pub fn crc32_ieee(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
 pub struct Qzip;
 
 impl Qzip {
@@ -344,5 +433,187 @@ impl<R: Read> QzipDecoder<R> {
 impl<R: Read> Read for QzipDecoder<R> {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self.reader.read(buf)
+    }
+}
+
+pub struct FramedQuatEncoder<W: Write> {
+    writer: W,
+    header: QzipHeader,
+    pending_quats: Vec<Quat>,
+    finished: bool,
+}
+
+impl<W: Write> FramedQuatEncoder<W> {
+    pub fn new(writer: W, chunk_quats: usize, with_checksum: bool) -> Result<Self, QzipError> {
+        let effective_chunk = chunk_quats.max(4) as u32;
+        let flags = FLAG_CHUNKED_STREAM
+            | FLAG_QUAT_4X_PACKED
+            | if with_checksum { FLAG_HAS_CHECKSUM } else { 0 };
+        let header = QzipHeader::new(flags, effective_chunk)?;
+        let mut enc = Self {
+            writer,
+            header,
+            pending_quats: Vec::with_capacity(effective_chunk as usize),
+            finished: false,
+        };
+        enc.writer
+            .write_all(&enc.header.encode())
+            .map_err(|e| QzipError::IoError(e.to_string()))?;
+        Ok(enc)
+    }
+
+    pub fn push_quats(&mut self, quats: &[Quat]) -> Result<(), QzipError> {
+        if self.finished {
+            return Err(QzipError::InvalidFrame("Encoder already finished".into()));
+        }
+        let max_chunk = self.header.chunk_size as usize;
+        for &q in quats {
+            self.pending_quats.push(q);
+            if self.pending_quats.len() == max_chunk {
+                self.flush_chunk()?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn push_bytes_as_quats(&mut self, data: &[u8]) -> Result<(), QzipError> {
+        let mut batch = Vec::with_capacity(data.len() * 4);
+        for &b in data {
+            batch.extend_from_slice(&Quat::unpack_four(b));
+        }
+        self.push_quats(&batch)
+    }
+
+    fn flush_chunk(&mut self) -> Result<(), QzipError> {
+        if self.pending_quats.is_empty() {
+            return Ok(());
+        }
+        let quat_count = self.pending_quats.len() as u32;
+        let payload = Quat::pack_quats_to_bytes(&self.pending_quats);
+        let payload_len = payload.len() as u32;
+
+        // Frame format: [quat_count: u32 LE][payload_len: u32 LE][payload][optional crc32: u32 LE]
+        self.writer
+            .write_all(&quat_count.to_le_bytes())
+            .map_err(|e| QzipError::IoError(e.to_string()))?;
+        self.writer
+            .write_all(&payload_len.to_le_bytes())
+            .map_err(|e| QzipError::IoError(e.to_string()))?;
+        self.writer
+            .write_all(&payload)
+            .map_err(|e| QzipError::IoError(e.to_string()))?;
+
+        if self.header.has_checksum() {
+            let crc = crc32_ieee(&payload);
+            self.writer
+                .write_all(&crc.to_le_bytes())
+                .map_err(|e| QzipError::IoError(e.to_string()))?;
+        }
+
+        self.pending_quats.clear();
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<W, QzipError> {
+        if !self.finished {
+            self.flush_chunk()?;
+            // End-of-stream sentinel frame: quat_count = 0, payload_len = 0
+            self.writer
+                .write_all(&0u32.to_le_bytes())
+                .map_err(|e| QzipError::IoError(e.to_string()))?;
+            self.writer
+                .write_all(&0u32.to_le_bytes())
+                .map_err(|e| QzipError::IoError(e.to_string()))?;
+            if self.header.has_checksum() {
+                let empty_crc = crc32_ieee(&[]);
+                self.writer
+                    .write_all(&empty_crc.to_le_bytes())
+                    .map_err(|e| QzipError::IoError(e.to_string()))?;
+            }
+            self.writer
+                .flush()
+                .map_err(|e| QzipError::IoError(e.to_string()))?;
+            self.finished = true;
+        }
+        Ok(self.writer)
+    }
+}
+
+pub struct FramedQuatDecoder<R: Read> {
+    reader: R,
+    header: QzipHeader,
+    eos_reached: bool,
+}
+
+impl<R: Read> FramedQuatDecoder<R> {
+    pub fn new(mut reader: R) -> Result<Self, QzipError> {
+        let mut hdr_buf = [0u8; QzipHeader::WIRE_LEN];
+        reader
+            .read_exact(&mut hdr_buf)
+            .map_err(|e| QzipError::IoError(e.to_string()))?;
+        let header = QzipHeader::decode(&hdr_buf)?;
+        Ok(Self {
+            reader,
+            header,
+            eos_reached: false,
+        })
+    }
+
+    pub fn header(&self) -> QzipHeader {
+        self.header
+    }
+
+    pub fn next_quats_chunk(&mut self) -> Result<Option<Vec<Quat>>, QzipError> {
+        if self.eos_reached {
+            return Ok(None);
+        }
+
+        let mut meta = [0u8; 8];
+        self.reader
+            .read_exact(&mut meta)
+            .map_err(|e| QzipError::IoError(e.to_string()))?;
+
+        let quat_count = u32::from_le_bytes(meta[0..4].try_into().unwrap()) as usize;
+        let payload_len = u32::from_le_bytes(meta[4..8].try_into().unwrap()) as usize;
+
+        let expected_packed_len = quat_count.div_ceil(4);
+        if payload_len != expected_packed_len {
+            return Err(QzipError::InvalidFrame(format!(
+                "Payload length {} does not match {} quats",
+                payload_len, quat_count
+            )));
+        }
+
+        let mut payload = vec![0u8; payload_len];
+        if payload_len > 0 {
+            self.reader
+                .read_exact(&mut payload)
+                .map_err(|e| QzipError::IoError(e.to_string()))?;
+        }
+
+        if self.header.has_checksum() {
+            let mut crc_buf = [0u8; 4];
+            self.reader
+                .read_exact(&mut crc_buf)
+                .map_err(|e| QzipError::IoError(e.to_string()))?;
+            let expected_crc = u32::from_le_bytes(crc_buf);
+            let actual_crc = crc32_ieee(&payload);
+            if actual_crc != expected_crc {
+                return Err(QzipError::ChecksumMismatch);
+            }
+        }
+
+        if quat_count == 0 && payload_len == 0 {
+            self.eos_reached = true;
+            return Ok(None);
+        }
+
+        let quats = if self.header.is_quat_packed() {
+            Quat::unpack_bytes_to_quats(&payload, quat_count)
+        } else {
+            return Err(QzipError::InvalidFlags(self.header.flags));
+        };
+
+        Ok(Some(quats))
     }
 }

@@ -434,4 +434,269 @@ mod tests {
         println!("Huffman Build Time:    {:?}", duration);
         println!("Q0 Bit Code Assignment: {:?}", q0_code);
     }
+
+    #[test]
+    fn test_quat_packing_quantization_and_arch_unpack_benchmark() {
+        use std::time::{Duration, Instant};
+
+        let start: Instant = Instant::now();
+        let (summary, is_quat_logic) = Quat::quaternary_savings_summary();
+        assert!(is_quat_logic);
+        assert!(!summary.is_empty());
+
+        let quats: Vec<Quat> = (0..100_000)
+            .map(|i| Quat::from_u8((i % 4) as u8))
+            .collect();
+        let packed: Vec<u8> = Quat::pack_quats_to_bytes(&quats);
+        assert_eq!(packed.len(), 25_000);
+
+        let unpacked: Vec<Quat> = Quat::unpack_quats_arch(&packed, quats.len());
+        assert_eq!(unpacked, quats);
+
+        let q_high = Quat::quantize_u8_lossy(230);
+        assert_eq!(q_high, Quat::Q3);
+        assert_eq!(q_high.dequantize_to_u8_center(), 224);
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_quat_packing_quantization_and_arch_unpack_benchmark took: {:?} for {} quats",
+            duration,
+            quats.len()
+        );
+    }
+
+    #[test]
+    fn test_header_flags_crc32_and_framed_stream_benchmark() {
+        use crate::qzip::{crc32_ieee, FramedQuatDecoder, FramedQuatEncoder, QzipHeader, FORMAT_VERSION};
+        use std::time::{Duration, Instant};
+
+        let start: Instant = Instant::now();
+        let sample_bytes = b"0123456789ABCDEF";
+        assert_eq!(crc32_ieee(sample_bytes), crc32_ieee(sample_bytes));
+
+        let bad_ver_err = QzipHeader::decode(&[b'Q', b'Z', b'I', b'P', FORMAT_VERSION + 1, 0, 0, 0, 0, 0])
+            .unwrap_err();
+        assert!(matches!(bad_ver_err, QzipError::UnsupportedVersion(_)));
+
+        let bad_flags_err = QzipHeader::new(0xFF, 64).unwrap_err();
+        assert!(matches!(bad_flags_err, QzipError::InvalidFlags(_)));
+
+        let input_quats: Vec<Quat> = (0..40_000)
+            .map(|i| Quat::from_u8(((i * 3 + 1) % 4) as u8))
+            .collect();
+
+        let mut encoder = FramedQuatEncoder::new(Vec::new(), 1024, true)
+            .expect("Failed to create FramedQuatEncoder");
+        encoder
+            .push_quats(&input_quats)
+            .expect("Failed to push quats");
+        let framed_bytes: Vec<u8> = encoder.finish().expect("Failed to finish FramedQuatEncoder");
+
+        let mut decoder = FramedQuatDecoder::new(&framed_bytes[..])
+            .expect("Failed to create FramedQuatDecoder");
+        let mut decoded_quats: Vec<Quat> = Vec::new();
+        while let Some(chunk) = decoder
+            .next_quats_chunk()
+            .expect("Failed to read next frame chunk")
+        {
+            decoded_quats.extend(chunk);
+        }
+        assert_eq!(decoded_quats, input_quats);
+
+        let mut tampered = framed_bytes.clone();
+        let last_idx = tampered.len() - 1;
+        tampered[last_idx] ^= 0x01;
+        let mut bad_decoder = FramedQuatDecoder::new(&tampered[..])
+            .expect("Failed to create decoder for tampered frame");
+        let mut read_res = Ok(());
+        loop {
+            match bad_decoder.next_quats_chunk() {
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(e) => {
+                    read_res = Err(e);
+                    break;
+                }
+            }
+        }
+        assert_eq!(read_res, Err(QzipError::ChecksumMismatch));
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_header_flags_crc32_and_framed_stream_benchmark took: {:?} (framed {} bytes)",
+            duration,
+            framed_bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_huffman_quat_codec_benchmark() {
+        use crate::entropy::QuatHuffmanCodec;
+        use std::time::{Duration, Instant};
+
+        let start: Instant = Instant::now();
+        let mut quats = Vec::with_capacity(100_000);
+        quats.extend(std::iter::repeat(Quat::Q0).take(70_000));
+        quats.extend(std::iter::repeat(Quat::Q1).take(20_000));
+        quats.extend(std::iter::repeat(Quat::Q2).take(7_000));
+        quats.extend(std::iter::repeat(Quat::Q3).take(3_000));
+
+        let encoded = QuatHuffmanCodec::encode(&quats);
+        let decoded = QuatHuffmanCodec::decode(&encoded).expect("Huffman decode failed");
+        assert_eq!(decoded, quats);
+        assert!(encoded.bitstream.len() < quats.len() / 4);
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_huffman_quat_codec_benchmark took: {:?} (stream bytes: {})",
+            duration,
+            encoded.bitstream.len()
+        );
+    }
+
+    #[test]
+    fn test_lz77_fast_roundtrip_benchmark() {
+        use crate::lz77::QuatLz77Fast;
+        use std::time::{Duration, Instant};
+
+        let start: Instant = Instant::now();
+        let pattern = [Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3, Quat::Q1, Quat::Q0];
+        let mut quats = Vec::with_capacity(60_000);
+        for _ in 0..10_000 {
+            quats.extend_from_slice(&pattern);
+        }
+
+        let lz = QuatLz77Fast::new(4096);
+        let tokens = lz.compress_fast(&quats);
+        let decompressed = QuatLz77Fast::decompress_fast(&tokens).expect("LZ77 fast decompress failed");
+        assert_eq!(decompressed, quats);
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_lz77_fast_roundtrip_benchmark took: {:?} (tokens: {})",
+            duration,
+            tokens.len()
+        );
+    }
+
+    #[test]
+    fn test_async_quat_blocking_and_streams_benchmark() {
+        use crate::async_zip::{
+            pack_quats_blocking, unpack_quats_blocking, AsyncQuatPackWriter, AsyncQuatUnpackReader,
+        };
+        use std::time::{Duration, Instant};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let start: Instant = Instant::now();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime");
+
+        let raw_quat_bytes: Vec<u8> = (0..16_384).map(|i| (i % 4) as u8).collect();
+        let expected_quats: Vec<Quat> = raw_quat_bytes.iter().map(|&b| Quat::from_u8(b)).collect();
+
+        rt.block_on(async {
+            let packed = pack_quats_blocking(expected_quats.clone())
+                .await
+                .expect("pack_quats_blocking failed");
+            let unpacked = unpack_quats_blocking(packed.clone(), expected_quats.len())
+                .await
+                .expect("unpack_quats_blocking failed");
+            assert_eq!(unpacked, expected_quats);
+
+            let mut writer_sink: Vec<u8> = Vec::new();
+            let mut quat_writer = AsyncQuatPackWriter::new(&mut writer_sink);
+            quat_writer
+                .write_all(&raw_quat_bytes)
+                .await
+                .expect("AsyncQuatPackWriter write_all failed");
+            quat_writer.flush().await.expect("AsyncQuatPackWriter flush failed");
+            quat_writer
+                .shutdown()
+                .await
+                .expect("AsyncQuatPackWriter shutdown failed");
+            assert_eq!(writer_sink, packed);
+
+            let mut reader_src = &writer_sink[..];
+            let mut quat_reader = AsyncQuatUnpackReader::new(&mut reader_src);
+            let mut out_bytes = Vec::new();
+            quat_reader
+                .read_to_end(&mut out_bytes)
+                .await
+                .expect("AsyncQuatUnpackReader read_to_end failed");
+            assert_eq!(out_bytes, raw_quat_bytes);
+        });
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_async_quat_blocking_and_streams_benchmark took: {:?} for {} quats",
+            duration,
+            expected_quats.len()
+        );
+    }
+
+    #[test]
+    fn test_ffi_pack_and_unpack_quats_benchmark() {
+        use std::time::{Duration, Instant};
+
+        let start: Instant = Instant::now();
+        let raw_quats: Vec<u8> = vec![0, 1, 2, 3, 3, 2, 1, 0, 1, 1];
+        let mut packed_len: usize = 0;
+
+        let status_len = unsafe {
+            qzip_pack_quats(
+                raw_quats.as_ptr(),
+                raw_quats.len(),
+                std::ptr::null_mut(),
+                &mut packed_len,
+            )
+        };
+        assert_eq!(status_len, QzipStatus::Success);
+        assert_eq!(packed_len, 3);
+
+        let mut packed_buf: Vec<u8> = vec![0u8; packed_len];
+        let status_pack = unsafe {
+            qzip_pack_quats(
+                raw_quats.as_ptr(),
+                raw_quats.len(),
+                packed_buf.as_mut_ptr(),
+                &mut packed_len,
+            )
+        };
+        assert_eq!(status_pack, QzipStatus::Success);
+
+        let mut unpacked_len: usize = 0;
+        let status_unpack_len = unsafe {
+            qzip_unpack_quats(
+                packed_buf.as_ptr(),
+                packed_buf.len(),
+                raw_quats.len(),
+                std::ptr::null_mut(),
+                &mut unpacked_len,
+            )
+        };
+        assert_eq!(status_unpack_len, QzipStatus::Success);
+        assert_eq!(unpacked_len, raw_quats.len());
+
+        let mut unpacked_buf: Vec<u8> = vec![0u8; unpacked_len];
+        let status_unpack = unsafe {
+            qzip_unpack_quats(
+                packed_buf.as_ptr(),
+                packed_buf.len(),
+                raw_quats.len(),
+                unpacked_buf.as_mut_ptr(),
+                &mut unpacked_len,
+            )
+        };
+        assert_eq!(status_unpack, QzipStatus::Success);
+        assert_eq!(unpacked_buf, raw_quats);
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_ffi_pack_and_unpack_quats_benchmark took: {:?}",
+            duration
+        );
+    }
+    
 }
